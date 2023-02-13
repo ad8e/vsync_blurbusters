@@ -9,6 +9,9 @@
 #define SYNC_IN_RENDER_THREAD 1
 #define SCANLINE_VSYNC 1
 #define SYNC_IN_SEPARATE_THREAD 0
+//make sure at most one of SYNC_IN_SEPARATE_THREAD and SYNC_IN_RENDER_THREAD is true. not both!
+//if you want to use the vblank waiting system (WaitForVerticalBlank) instead of the scanline system, then change: SYNC_IN_SEPARATE_THREAD 1, SYNC_IN_RENDER_THREAD 0, and in render.h, sync_mode = separate_heartbeat
+
 //credits:
 //EnumDisplayDevices code plagiarized from https://stackoverflow.com/questions/9524309/enumdisplaydevices-function-not-working-for-me
 //Jerry Jongerius testing Windows DWM/D3D behavior at http://www.duckware.com/test/chrome/467617-source-code.zip
@@ -238,10 +241,6 @@ void get_scanline_info() {
 		porch_scanlines = total_scanlines - active_scanlines;
 		//outc("porch active total", porch_scanlines, active_scanlines, total_scanlines);
 	}
-}
-
-void get_scanline_info() {
-	get_some_system_data_from_QDC();
 }
 
 //#include <dwmapi.h>

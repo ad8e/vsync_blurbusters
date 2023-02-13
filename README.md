@@ -8,8 +8,13 @@ The other files are helper files which you can ignore.
 
 It works on Linux, using OML to get the vsync timepoint.
 
-It works on Windows, using either scanlines or waiting. It's not clear which is preferred. On Intel GPUs, scanlines are better. On Nvidia, scanlines may have problems.
+It works on Windows, using either scanlines or waiting. It's not clear which is preferred. On Intel GPUs, scanlines are better. On Nvidia, scanlines may have problems. The scanline mechanism is used by default. If you want to try the waiting mechanism, there are instructions at the top of `platform_vsync_windows.cpp` for switching over.
 
-Guide:
-1. install GLFW. On Linux, that's `sudo apt install libglfw3-dev`
-2. Compile. On Linux, that's `g++ render_vsync_demo.cpp -std=c++20 -lGL -lglfw -lXrandr -Ij -lpthread -O2`
+Guide for Linux:
+1. install GLFW: `sudo apt install libglfw3-dev`
+2. Compile: `g++ render_vsync_demo.cpp -std=c++20 -lGL -lglfw -lXrandr -Ij -lpthread -O2`
+
+On Windows:
+I used mingw-w64.
+1. Install GLFW. I used vcpkg for this.
+2. Using MSYS2: `g++ render_vsync_demo.cpp -std=c++20 -Ij -lpthread -lglfw3 -lole32 -lgdi32 -lwinmm -O2`

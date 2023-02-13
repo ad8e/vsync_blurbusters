@@ -8,6 +8,9 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#if LOAD_WITH_GLAD
+#include "etc/glad.c"
+#endif
 
 #include "platform_vsync.cpp" //platform-specific APIs for finding the vsync poing
 #include "vsync.cpp" //calculates phase and period when vsync is grabbed in a separate thread
@@ -89,7 +92,7 @@ void main() {
 			update_scanline_boundaries();
 		}
 #endif
-
+		//user_desired_phase_offset = 0.5; //moves the tearline to the middle of the screen
 		time_previous_frame_start = time_at_frame_start;
 		uint64_t vblank_phase;
 		double vblank_period;
