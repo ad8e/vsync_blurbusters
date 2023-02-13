@@ -16,5 +16,5 @@ Guide for Linux:
 
 On Windows:
 I used mingw-w64.
-1. Install GLFW. I used vcpkg for this.
+1. Install GLFW. mingw-w64 provides `pacman -S mingw-w64-x86_64-glfw`. For Visual Studio, vcpkg can be used.
 2. Using MSYS2: `g++ render_vsync_demo.cpp -std=c++20 -Ij -lpthread -lglfw3 -lole32 -lgdi32 -lwinmm -O2`
