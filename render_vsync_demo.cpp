@@ -86,6 +86,9 @@ void main() {
 	while (!time_to_exit()) {
 		glfwPollEvents();
 
+		//uint64_t time_at_frame_start = now() + int64_t(generate_noise_for_timepoint.next_float() * ticks_per_sec / 60 / 16); //adds noise to the timepoint, for checking performance of the vsync finder
+		uint64_t time_at_frame_start = now(); //if spam_swap is true, no need to call this. oh well. synchronizing the behavior would be too annoying, as spam_swap can change between frames, and then the previous timestamp would be out of whack. easier to just always call the timestamp.
+
 		//vscan gives slightly less error if the scanline is before the timepoint. however, it's marginal: 0.0042 ms vs 0.0044 ms. it wobbles too. hard to tell if it's just noise.
 		//if it's spam-swapping, we could get it only once per vsync. however, I think I don't care.
 #if SYNC_IN_RENDER_THREAD && SCANLINE_VSYNC
@@ -96,10 +99,6 @@ void main() {
 			update_scanline_boundaries();
 		}
 #endif
-
-		//uint64_t time_at_frame_start = now() + int64_t(generate_noise_for_timepoint.next_float() * ticks_per_sec / 60 / 16); //adds noise to the timepoint, for checking performance of the vsync finder
-		uint64_t time_at_frame_start = now(); //if spam_swap is true, no need to call this. oh well. synchronizing the behavior would be too annoying, as spam_swap can change between frames, and then the previous timestamp would be out of whack. easier to just always call the timestamp.
-		//it's better to measure the timestamp after generating OpenGL Queries. however, we need to know the timestamp to know whether to generate Queries, so this comes before.
 
 #if SYNC_LINUX
 		get_sync_values();
