@@ -221,23 +221,20 @@ void main() {
 		triangles.move_and_render();
 
 #if ANY_SYNC_SUPPORTED
-		if (busy_wait_for_exact_swap) {
-			uint64_t time_after_render = now();
-			if (time_after_render <= target_swap_time && wait_and_tear) {
-				//we have a wait operation. which means we must split the GPU measurement in two.
-				if (measure_GPU_time_spent)
-					GPU_timestamp_send(0);
+		if (busy_wait_for_exact_swap && wait_and_tear && now() <= target_swap_time) {
+			//we have a wait operation. which means we must split the GPU measurement in two.
+			if (measure_GPU_time_spent)
+				GPU_timestamp_send(0);
 
-				accurate_sleep_until(target_swap_time);
+			accurate_sleep_until(target_swap_time);
 
-				if (measure_GPU_time_spent)
-					GPU_timestamp_send();
+			if (measure_GPU_time_spent)
+				GPU_timestamp_send();
 
-				swap_now();
+			swap_now();
 
-				if (measure_GPU_time_spent) {
-					GPU_timestamp_send(1);
-				}
+			if (measure_GPU_time_spent) {
+				GPU_timestamp_send(1);
 			}
 		}
 		else

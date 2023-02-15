@@ -93,7 +93,7 @@ void GPU_timestamp_retrieve() {
 		//for (int i : zero_to(1000)) //this checks how expensive the query retrieval is, for the actual result. with 1000 times and Query deletion off, it starts to jitter. but at least it stays at 1 bar, so it's cheaper than the availability check
 		glGetQueryObjectui64v(query_circular_buffer[index_lagging_GPU_time_to_retrieve % frame_time_buffer_size], GL_QUERY_RESULT, &timestamp);
 		double new_time = (timestamp - frame_time_history[output_index % frame_time_buffer_size]) / pow(10, 9);
-		outc("new time", output_which, new_time, frame_time_single);
+		//outc("new time", output_which, new_time, frame_time_single);
 		switch (output_which) {
 		case 0:
 			render_time = new_time;
