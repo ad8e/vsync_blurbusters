@@ -19,6 +19,13 @@
 namespace render {
 GL_buffer<uint32_t> triangles;
 
+//for timestamps
+bool lt_circular(uint64_t a, uint64_t b) { return int64_t(a - b) < 0; }
+bool lt_circular(uint32_t a, uint32_t b) { return int32_t(a - b) < 0; }
+//disallow conversions, since comparison of unsigned is the whole point
+template <class T, class U>
+bool lt_circular(T a, U b) = delete;
+
 void render_loop() {
 	glfwMakeContextCurrent(window);
 	tell_system_whether_to_wait_for_vsync();
@@ -70,6 +77,7 @@ void main() {
 	improve_timer_resolution_on_Windows();
 #endif
 
+	glGenQueries(frame_time_buffer_size, query_circular_buffer.data());
 	//variables for the animation
 	bool bar_flip = 0; //flips every full run
 	bool color_flip = 0; //flips every frame
@@ -78,12 +86,8 @@ void main() {
 	while (!time_to_exit()) {
 		glfwPollEvents();
 
-		uint64_t time_at_frame_start = now();
-
-#if SYNC_LINUX
-		get_sync_values();
-#endif
-
+		//vscan gives slightly less error if the scanline is before the timepoint. however, it's marginal: 0.0042 ms vs 0.0044 ms. it wobbles too. hard to tell if it's just noise.
+		//if it's spam-swapping, we could get it only once per vsync. however, I think I don't care.
 #if SYNC_IN_RENDER_THREAD && SCANLINE_VSYNC
 		uint64_t scanline;
 		if (sync_mode == sync_in_render_thread) {
@@ -92,63 +96,90 @@ void main() {
 			update_scanline_boundaries();
 		}
 #endif
-		//user_desired_phase_offset = 0.5; //moves the tearline to the middle of the screen
-		time_previous_frame_start = time_at_frame_start;
-		uint64_t vblank_phase;
-		double vblank_period;
-#if SYNC_IN_RENDER_THREAD
-		vblank_period = vscan::period;
-		vblank_phase = vscan::phase;
-#elif SYNC_IN_SEPARATE_THREAD
-		vblank_period = vf::vblank_period_atomic.load(std::memory_order_relaxed);
-		vblank_phase = vf::vblank_phase_atomic.load(std::memory_order_relaxed);
-#endif
-		bool vblank_wait_mechanism_active = (sync_mode == sync_in_render_thread) || (sync_mode == separate_heartbeat);
 
+		//uint64_t time_at_frame_start = now() + int64_t(generate_noise_for_timepoint.next_float() * ticks_per_sec / 60 / 16); //adds noise to the timepoint, for checking performance of the vsync finder
+		uint64_t time_at_frame_start = now(); //if spam_swap is true, no need to call this. oh well. synchronizing the behavior would be too annoying, as spam_swap can change between frames, and then the previous timestamp would be out of whack. easier to just always call the timestamp.
+		//it's better to measure the timestamp after generating OpenGL Queries. however, we need to know the timestamp to know whether to generate Queries, so this comes before.
+
+#if SYNC_LINUX
+		get_sync_values();
+#endif
+
+		//whether you are trying to sync to the vsync point by waiting and swapping at a tearline
+		bool vsync_period_phase_info_available = (sync_mode == separate_heartbeat) || (sync_mode == sync_in_render_thread);
+
+		//we want to measure GPU time to get more accurate waits.
+		//if the frames are taking too long, then we wouldn't be able to make use of GPU time anyway; the only possible strategy is to spam-swap, in which case the burden of measuring GPU time is a problem
+		//GPU timestamps are slow and heavy. CPU time is just a signal to check if we should measure this.
+		//(GPU time is short) || (CPU time between frames < vblank_period) = start measuring GPU time.
+		//thus, we only measure GPU time if we expect frame times to be below one frame, meeting one of the following conditions:
+		//1. the average GPU time is generally short enough (frame_time_smoothed)
+		//2. the most recent GPU time was short (frame_time_single). this enables a faster recovery - a single good frame leads to more measurements of more good frames.
+		//3. the CPU time is approximately equal to vblank_period - then sometimes we measure, sometimes not. this is a recovery mechanism and only needs to occasionally work.
+		//CPU time is capped from below by the vblank period, so there's no point in trying to be more reliable than grabbing the occasional instances where it dips below from noise.
+		//when the CPU time drops below, then GPU time measurement will kick in, and it'll stay measuring GPU time if it's appropriate.
 		bool measure_GPU_time_spent = false;
-		if (!spam_swap && vblank_wait_mechanism_active)
-			measure_GPU_time_spent =
-				single_frame_time < vblank_period / ticks_per_sec ||
-				frame_time < vblank_period / ticks_per_sec ||
-				time_at_frame_start - time_previous_frame_start < vblank_period;
-		if (measure_GPU_time_spent)
-			generate_OpenGL_Queries();
 
 #if ANY_SYNC_SUPPORTED
-		uint64_t time_when_image_will_be_seen;
-		bool syncing_to_vblank = measure_GPU_time_spent && frame_time < vblank_period / ticks_per_sec;
-		if (syncing_to_vblank) {
-			if ((uint64_t)std::abs(int64_t(vblank_phase - time_at_frame_start)) > ticks_per_sec * 4) {
-				//phase is totally out of whack. don't bother calculating
-				syncing_to_vblank = false;
-				goto skip_vsync_location_calculation;
-			}
-			//outc("phase", int64_t(vblank_phase_from_wait - vblank_phase) * 1000.0 / ticks_per_sec); //the wakeup vsync mechanism is earlier than the scanline mechanism! this output produces negative values. that's because the wakeup is at the beginning of the front porch, not the vsync.
-			double delay_from_timer_and_swap_relation = GPU_swap_delay_in_ms / 1000;
-			double seconds_to_spend_rendering = (frame_time + render_overrun_in_ms / 1000 + delay_from_timer_and_swap_relation); //from now until the frame is presented on screen
-			double adjustment_for_image_presentation_late_in_frame = (double)(scanlines_between_sync_and_first_displayed_line - porch_scanlines) / total_scanlines; //to beginning of front porch
-			double appearance_time_after_vsync_in_ticks = vblank_period * (user_desired_phase_offset + adjustment_for_image_presentation_late_in_frame); //when the frame is presented on screen. right now, it aims for the end of the active display = beginning of the porch. this is because trying to render when the displayed lines go out seems to cause severe issues, so we avoid the end of the porch.
-			int64_t time_rel_vblank_phase = time_at_frame_start - vblank_phase;
-			int periods_to_move_forward_from_vblank = ceil(time_rel_vblank_phase + seconds_to_spend_rendering * ticks_per_sec - appearance_time_after_vsync_in_ticks) / vblank_period;
-			time_when_image_will_be_seen = vblank_phase + uint64_t(appearance_time_after_vsync_in_ticks + periods_to_move_forward_from_vblank * vblank_period);
-			if (int64_t(last_frame_vblank_target + int64_t(vblank_period / 4) - time_when_image_will_be_seen) > 0)
-				time_when_image_will_be_seen += int64_t(vblank_period); //you rendered super fast and are trying to render the same frame. so wait another frame.
-			last_frame_vblank_target = time_when_image_will_be_seen;
-
-			uint64_t target_render_start_time = time_when_image_will_be_seen - int64_t(seconds_to_spend_rendering * ticks_per_sec);
-
-			if (int64_t(target_render_start_time - time_at_frame_start) > int64_t(ticks_per_sec / 30))
-				target_render_start_time = time_at_frame_start + ticks_per_sec / 30;
-			glfwPollEvents();
+		uint64_t vblank_phase;
+		double vblank_period;
+		if (sync_mode == sync_in_render_thread) {
+			vblank_phase = vscan::phase;
+			vblank_period = vscan::period;
 		}
-	skip_vsync_location_calculation:
-#else
-		//no improved vsync support is available
+		else if (sync_mode == separate_heartbeat) {
+			vblank_phase = vf::vblank_phase_atomic.load(std::memory_order_relaxed);
+			vblank_period = vf::vblank_period_atomic.load(std::memory_order_relaxed);
+		}
+		else
+			error_assert("implement me");
+
+		if (!spam_swap && vsync_period_phase_info_available)
+			measure_GPU_time_spent =
+				frame_time_single < vblank_period / ticks_per_sec ||
+				frame_time_smoothed < vblank_period / ticks_per_sec ||
+				time_at_frame_start - time_previous_frame_start < vblank_period;
+
+		//if frames might be on time, it's worth checking the GPU time.
+		//if frames are surely on time, it's worth syncing to vblank.
+		bool wait_and_tear = measure_GPU_time_spent && frame_time_smoothed < vblank_period / ticks_per_sec; //we need this. be safe if the vsync finder returns junk values. so bail out after calculation
+
+		//if period is more than one second. it's probably bogus information.
+		//if phase is more than 100 seconds away. it's not likely to be accurate.
+		//in both cases, just ignore it and spam-swap until we get real data
+		if (vblank_period > ticks_per_sec || (uint64_t)std::abs(int64_t(vblank_phase - time_at_frame_start)) > ticks_per_sec * 10) {
+			wait_and_tear = false;
+		}
+
+		uint64_t target_render_start_time;
+		uint64_t target_swap_time;
+		if (wait_and_tear) {
+			//outc("phase", int64_t(vblank_phase_from_wait - vblank_phase) * 1000.0 / ticks_per_sec); //the wakeup vsync mechanism is earlier than the scanline mechanism! this output produces negative values. that's because the wakeup is at the beginning of the front porch, not the vsync.
+
+			double time_between_render_start_and_tearline = frame_time_smoothed + render_overrun_buffer_room + GPU_swap_delay_undocumented;
+			double adjustment_for_image_presentation_late_in_frame = (double)(scanlines_between_sync_and_first_displayed_line - porch_scanlines) / total_scanlines;
+			double tearline_time_after_sync = user_desired_phase_offset + adjustment_for_image_presentation_late_in_frame; //aims for the end of the active display = beginning of the porch. this is because trying to render when the displayed lines go out seems to cause severe issues, so we avoid the end of the porch.
+			int64_t time_rel_vblank_phase = time_at_frame_start - vblank_phase;
+			int periods_to_move_forward_from_vblank = ceil((time_rel_vblank_phase + time_between_render_start_and_tearline * ticks_per_sec) / vblank_period - tearline_time_after_sync);
+			uint64_t vblank_target = vblank_phase + uint64_t(periods_to_move_forward_from_vblank * vblank_period);
+			if (int64_t(vblank_target - last_frame_vblank_target) < vblank_period / 2) {
+				//auto distance_to_ceil = [](double f) { return ceil(f) - f; };
+				//outc("extra wait, extra room was", distance_to_ceil((time_rel_vblank_phase + time_between_render_start_and_tearline * ticks_per_sec) / vblank_period - tearline_time_after_sync), periods_to_move_forward_from_vblank);
+				++periods_to_move_forward_from_vblank; //you rendered super fast and are trying to render the same frame. so wait another frame.
+			}
+			last_frame_vblank_target = vblank_phase + uint64_t(periods_to_move_forward_from_vblank * vblank_period); //re-calculate it in case periods changed
+
+			//tearline_time = vblank_phase + uint64_t((tearline_time_after_sync + periods_to_move_forward_from_vblank) * vblank_period);
+
+			target_render_start_time = vblank_phase + uint64_t((tearline_time_after_sync + periods_to_move_forward_from_vblank) * vblank_period - time_between_render_start_and_tearline * ticks_per_sec);
+			target_swap_time = vblank_phase + uint64_t((tearline_time_after_sync + periods_to_move_forward_from_vblank) * vblank_period - (GPU_swap_delay_undocumented + swap_time) * ticks_per_sec);
+		}
 #endif
 
+		time_previous_frame_start = time_at_frame_start;
+		//it's possible this isn't capturing the CPU-side of the rendering. maybe todo.
 		if (measure_GPU_time_spent) {
-			glQueryCounter(query_double_buffer[index_next_query_available % frame_time_buffer_size], GL_TIMESTAMP);
-			++index_next_query_available;
+			GPU_timestamp_send();
 		}
 		//rendering starts now; we've done all the waiting we want and gathered all the information we will have.
 		auto time_at_render_start = now();
@@ -191,47 +222,66 @@ void main() {
 		triangles.move_and_render();
 
 #if ANY_SYNC_SUPPORTED
-		if (vblank_wait_mechanism_active) {
-			//timer before the swap. that is a bad thing; it will delay the swap. it will also be less accurate since we want to include the swap in the measured time
-			//however, we have a wait operation. we cannot query the timestamp after the wait or it will become a self-fulfilling prophecy: times take long because you wait, then you wait for longer times.
-			if (measure_GPU_time_spent) {
-				glQueryCounter(query_double_buffer[index_next_query_available % frame_time_buffer_size], GL_TIMESTAMP);
-				++index_next_query_available;
+		if (busy_wait_for_exact_swap) {
+			uint64_t time_after_render = now();
+			if (time_after_render <= target_swap_time && wait_and_tear) {
+				//we have a wait operation. which means we must split the GPU measurement in two.
+				if (measure_GPU_time_spent)
+					GPU_timestamp_send(0);
+
+				accurate_sleep_until(target_swap_time);
+
+				if (measure_GPU_time_spent)
+					GPU_timestamp_send();
+
+				swap_now();
+
+				if (measure_GPU_time_spent) {
+					GPU_timestamp_send(1);
+				}
 			}
-			if (syncing_to_vblank)
-				accurate_sleep_until(time_when_image_will_be_seen - int64_t(GPU_swap_delay_in_ms * ticks_per_sec / 1000));
-			swap_now();
 		}
 		else
 #endif
 		{
-			swap_now();
-			if (measure_GPU_time_spent) {
-				glQueryCounter(query_double_buffer[index_next_query_available % frame_time_buffer_size], GL_TIMESTAMP);
-				++index_next_query_available;
-				glFlush(); //this is necessary! otherwise, it waits for next frame and then reports a 16.6 ms frame time.
-			}
+			swap_now(); //Linux: if I turn this off, the input lag fixes itself! so glFlush is clobbering the latency of the event system
+			if (measure_GPU_time_spent)
+				GPU_timestamp_send(2);
+
+			//it's important to measure the time that swap takes, because it can be 6 ms.
+			//Intel HD 4000
+			//if we measure before the swap, without glFlush(), the timer reports 0.026 ms per frame
+			//if we measure after the swap, with glFlush(), the timer reports 0.53 ms per frame.
+			//the swap takes 0.5 ms
+
+			//Iris Xe: the delay is 0-6 ms, determined by the frequency of the GPU. you can see the GPU's frequency step around as its frequency changes.
+			//to check this, I installed tlp, and changed these configurations, which forced the GPU to its lowest frequency, and stabilized the tearline at 2/5 down the screen:
+			//INTEL_GPU_MAX_FREQ_ON_AC=100
+			//INTEL_GPU_BOOST_FREQ_ON_AC=100
+			//INTEL_GPU_MIN_FREQ_ON_AC=100
+
+			//vf::new_value(now()); //for testing how accurate GPU wakeup is. turn on double buffer vsync, (it's not possible with separate_heartbeat_vsync, because it collides with the vsync finder. you'd need to copy a new one into a separate namespace)
+			//if (vf::elements() > 16) outc("jitter:", vf::calc_error_in_shitty_way() * 1000.0 / ticks_per_sec);
 		}
 
 		if (measure_GPU_time_spent) {
-			uint max_queries_to_try = 2;
-			while (int(index_next_query_available - index_lagging_GPU_time_to_retrieve) > 0 && max_queries_to_try--) {
-				GLuint64 time_after_render;
+			//uint max_queries_to_retrieve_per_frame = 2; //if you get 1 query, you're treading. if you get 2, you're moving forward. consuming 2 over time is good enough to recover from any delay. we don't want to ask for queries more than necessary.
+			//however, now there can be either 2 or 4 queries. it's probably better not to set a limit.
+
+			//I tried to measure performance of the Query operations by running Query 100 times, and looking at the sine wave animation. I turned on GPU timestamp measurement and turned off the vblank sync.
+			//then, comment out glDeleteQueries(), because that is causing most of the jitter, which is making further jitter hard to see
+			//"if (!spam_swap) measure_GPU_time_spent =" -> "if (1)"
+			//"if (measure_GPU_time_spent) {" -> "if (0) {", where the vblank phase operations are
+			//results are below in the zero_to(1000) comments
+			while (lt_circular(index_lagging_GPU_time_to_retrieve, index_next_query_available)) {
 				GLint done = 0;
 
-				glGetQueryObjectiv(query_double_buffer[index_lagging_GPU_time_to_retrieve % frame_time_buffer_size], GL_QUERY_RESULT_AVAILABLE, &done);
+				//for (int i : zero_to(1000)) //this checks how expensive the query availability retrieval is. interestingly, with Query deletion on, the sine wave animation is _more_ consistent when checking 100 times, than when checking once! it stops twitching back and forth different times per frame, and starts twitching evenly across frames. I assume that's bad even though it looks good.
+				//if I check 1000 times, and turn Query deletion off, then the animation starts skipping 2 bars (32 pixels) instead of 1 bar (16 pixel). so it's pretty expensive
+				glGetQueryObjectiv(query_circular_buffer[index_lagging_GPU_time_to_retrieve % frame_time_buffer_size], GL_QUERY_RESULT_AVAILABLE, &done);
 
-				if (done) {
-					if (index_lagging_GPU_time_to_retrieve % 2) { //frame end timepoint
-						glGetQueryObjectui64v(query_double_buffer[index_lagging_GPU_time_to_retrieve % frame_time_buffer_size], GL_QUERY_RESULT, &time_after_render);
-						finished_time_retrieval(time_after_render);
-					}
-					else {
-						//frame start timepoint
-						glGetQueryObjectui64v(query_double_buffer[index_lagging_GPU_time_to_retrieve % frame_time_buffer_size], GL_QUERY_RESULT, &GPU_start_times[(index_lagging_GPU_time_to_retrieve / 2) % GPU_timestamp_buffer_size]);
-					}
-					++index_lagging_GPU_time_to_retrieve;
-				}
+				if (done)
+					GPU_timestamp_retrieve();
 				else
 					break;
 			}
@@ -270,8 +320,6 @@ int main(int argc, char** argv) {
 
 	auto monitor_Hz = get_refresh_rate();
 	extern double system_claimed_monitor_Hz;
-	extern double frame_time;
-	frame_time = 0.5 / monitor_Hz;
 	system_claimed_monitor_Hz = monitor_Hz;
 	if (sync_mode == sync_in_render_thread)
 		vscan::period = ticks_per_sec / double(monitor_Hz);

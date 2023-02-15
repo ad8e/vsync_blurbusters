@@ -62,7 +62,7 @@ single_def const bool input_and_render_separate_threads = true; //apparently, Li
 static_assert(0, "need to test this platform");
 #endif
 
-single_def bool want_precise_swap_ignoring_input = false; //the scanline display wants the swap to be at a precise time. it doesn't care that there are no inputs being processed; it just wants an accurate scanline.
+single_def bool busy_wait_for_exact_swap = true; //the scanline display wants the swap to be at a precise time. it doesn't care that there are no inputs being processed; it just wants an accurate scanline.
 single_def bool spam_swap = false; //keep swapping constantly. for scanline displays
 single_def bool triangles_active = false; //these are set by input (which handles all UI elements) and read by rendering.
 single_def bool text_active = false;
