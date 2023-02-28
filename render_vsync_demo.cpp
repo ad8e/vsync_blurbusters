@@ -305,6 +305,7 @@ void main() {
 void mouse_cursor_callback(GLFWwindow* window, double xpos, double ypos) {
 	render::mouse_x = xpos + 0.5;
 	render::mouse_y = render::screen_h - ypos - 0.5;
+	user_desired_phase_offset = ypos / render::screen_h;
 }
 
 int main(int argc, char** argv) {
