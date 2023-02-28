@@ -21,6 +21,8 @@
 #include "vsync.cpp" //calculates phase and period when vsync is grabbed in a separate thread
 #include "vsync_with_scanline.cpp" //calculates phase and period when the scanline is grabbed in the render thread
 
+#define MEASURE_SWAP 1
+
 namespace render {
 GL_buffer<uint32_t> triangles;
 
@@ -228,19 +230,28 @@ void main() {
 #if ANY_SYNC_SUPPORTED
 		if (busy_wait_for_exact_swap && wait_and_tear && now() <= target_swap_time) {
 			//we have a wait operation. which means we must split the GPU measurement in two.
+
+#if MEASURE_SWAP
 			if (measure_GPU_time_spent)
 				GPU_timestamp_send(0);
-
+#else
+			if (measure_GPU_time_spent)
+				GPU_timestamp_send(2);
+#endif
 			accurate_sleep_until(target_swap_time);
 
+#if MEASURE_SWAP
 			if (measure_GPU_time_spent)
 				GPU_timestamp_send();
+#endif
 
 			swap_now();
 
+#if MEASURE_SWAP
 			if (measure_GPU_time_spent) {
 				GPU_timestamp_send(1);
 			}
+#endif
 		}
 		else
 #endif
