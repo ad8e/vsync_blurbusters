@@ -139,7 +139,7 @@ int first_scanline_in_display = -1;
 int last_scanline_before_display = 0; //first line must always be vsync, according to ToastyX.
 //future: Mark Rejhon reports that D3DKMTGetScanLine takes 8 scanlines on his 1080 Ti; maybe his code has a problem? he suspects maybe it's just slow on Nvidia cards
 //future: Mark Rejhon reports that the scanline counter doesn't increment properly in the porch (when InVerticalBlank is true). I should investigate that when I get a new graphics card. it works fine on my Intel HD 4000
-uint64_t get_scanline() {
+uint get_scanline() {
 	auto result = D3DKMTGetScanLine(&scanline_windows); //runtime is 0.005-0.015 ms on my Intel HD 4000. 1000 calls in a loop takes 2-5 ms.
 	//standard deviation is 0.004 ms. Quantization error of the scanline is (16.666/1125/sqrt12 = 0.00427 ms). that means D3DKMTGetScanLine() is perfectly accurate up to its theoretical limit.
 	check_assert(result == STATUS_SUCCESS, "scanline error", result); //happens if you're doing double buffer vsync

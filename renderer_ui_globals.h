@@ -1,5 +1,6 @@
 #pragma once
 #include "helper.h"
+#include "timing.h"
 
 namespace render {
 single_def int32_t screen_w = 0, screen_h = 0;
@@ -8,7 +9,7 @@ single_def int32_t screen_w = 0, screen_h = 0;
 single_def double mouse_x_raw[2] = {0, 0}; //[0] is the more recent timepoint
 single_def double mouse_y_raw[2] = {0, 0};
 single_def uint64_t mouse_timepoint[2] = {0, 0};
-double ticks_between_mouse_events = ticks_per_sec / 1000; //mouse sampling frequency. only has to be approximately correct. initial assumption is 1 ms. used to determine if the time after the last mouse input is because the mouse is still, or if it's just waiting for the next input
+double ticks_between_mouse_events = ticks_per_sec / 1000.0; //mouse sampling frequency. only has to be approximately correct. initial assumption is 1 ms. used to determine if the time after the last mouse input is because the mouse is still, or if it's just waiting for the next input
 
 //the mouse position is derived from the raw mouse position by extrapolation. it must be set before usage.
 //for clicks and renders, these are cached automatically

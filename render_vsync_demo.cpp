@@ -1,4 +1,9 @@
 #define DISABLE_FONTS 1
+#if _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 //miscellaneous helper files I carry around
 #include "timing.cpp"
 #include "console.h"

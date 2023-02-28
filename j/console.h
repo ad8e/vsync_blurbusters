@@ -14,7 +14,17 @@
 #include <string>
 #include <tuple>
 #include <vector>
-typedef unsigned uint; //clang and VSCode don't do this automatically
+
+//ghetto version of unreachable. since meson still doesn't let me configure C++23
+//https://en.cppreference.com/w/cpp/utility/unreachable
+[[noreturn]] inline void unreachable()
+{
+#if __GNUC__ // GCC, Clang, ICC
+    __builtin_unreachable();
+#elif _MSC_VER // MSVC
+    __assume(false);
+#endif
+}
 
 /*
 three possible methods:
@@ -38,18 +48,18 @@ three possible methods:
 
 using std::string_view;
 
-constexpr unsigned max_buffer_size = 1024;
+constexpr size_t max_buffer_size = 4096;
 //future: perhaps turn position and max_buffer_size into pointers instead. because to_chars likes pointers
 //but then it becomes hard to find the remaining buffer capacity. max_size - (ptr - base). so let's just leave it as an integer
 
-void o(string_view s, char* buffer, unsigned& position) {
-	unsigned to_write = std::min(max_buffer_size - position, (uint)s.size());
+void o(string_view s, char* buffer, size_t& position) {
+	size_t to_write = std::min(max_buffer_size - position, s.size());
 	memcpy(&buffer[position], s.data(), to_write);
 	position += to_write;
 };
 
 //integers can convert to chars, which is messy. so we rename it o_c instead of o
-void o_c(char c, char* buffer, unsigned& position) {
+void o_c(char c, char* buffer, size_t& position) {
 	if (position != max_buffer_size) {
 		buffer[position] = c;
 		++position;
@@ -61,7 +71,7 @@ void o_c(char c, char* buffer, unsigned& position) {
 //probably has something to do with prvalues being ganked by giving them a name.
 //well, I switched to std::to_chars. haven't checked the new behavior
 template <typename T>
-void o_convert(T s_pre_convert, char* buffer, unsigned& position) {
+void o_convert(T s_pre_convert, char* buffer, size_t& position) {
 	using std::to_chars;
 	if (auto [ptr, ec] = to_chars(&buffer[position], &buffer[max_buffer_size], s_pre_convert); ec == std::errc()) {
 		position += ptr - &buffer[position];
@@ -74,10 +84,10 @@ void o_convert(T s_pre_convert, char* buffer, unsigned& position) {
 
 //get rid of me after gcc std::to_chars starts supporting floats
 template <typename T>
-void o_convert_string(T s_pre_convert, char* buffer, unsigned& position) {
+void o_convert_string(T s_pre_convert, char* buffer, size_t& position) {
 	using std::to_string;
 	std::string s = to_string(s_pre_convert);
-	unsigned to_write = std::min(max_buffer_size - position, (uint)s.size());
+	auto to_write = std::min(max_buffer_size - position, s.size());
 	memcpy(&buffer[position], s.data(), to_write);
 	position += to_write;
 };
@@ -158,7 +168,7 @@ inline constexpr bool dependent_false = false;
 //#include <algorithm>
 int* arbitrary_memory_to_offset_pointer_addresses_from = new int;
 #endif
-void o_convert_pointer(uintptr_t w, char* buffer, unsigned& position) {
+void o_convert_pointer(uintptr_t w, char* buffer, size_t& position) {
 #if !NDEBUG
 	//std::array special_constants{0ull, 0xABABABABABABABAB, 0xBAADF00DBAADF00D, 0xFEEEFEEEFEEEFEEE};
 	//if (std::find(special_constants.begin(), special_constants.end(), w) == special_constants.end())
@@ -182,14 +192,14 @@ void o_convert_pointer(uintptr_t w, char* buffer, unsigned& position) {
 	}
 };
 
-void outc_internal(bool insert_space, char* buffer, unsigned& position) {
+void outc_internal(bool insert_space, char* buffer, size_t& position) {
 	return;
 }
 
 //insert_space is "if necessary". so if the next thing starts with a space, don't insert a space.
 //return true if this term wants whitespace after it. because we recurse on tuples, so we need to know what happened inside
 template <typename T, typename... Args>
-void outc_internal(bool insert_space, char* buffer, unsigned& position, T s, Args&&... args) {
+void outc_internal(bool insert_space, char* buffer, size_t& position, T s, Args&&... args) {
 	bool wsa = true;
 	using type = std::remove_cvref_t<T>;
 	//nuking this costs 1 KB, so it's not the source of the extra file size
@@ -276,7 +286,7 @@ void outc_internal(bool insert_space, char* buffer, unsigned& position, T s, Arg
 template <typename... Args>
 void outc(Args&&... args) {
 	char buffer[max_buffer_size]; //change the buffer, then write everything out at once.
-	unsigned position = 0;
+	size_t position = 0;
 
 	outc_internal(false, buffer, position, std::forward<Args>(args)..., '\n'); //strings only print in emscripten when they end in \n
 #if !NDEBUG
@@ -296,7 +306,7 @@ void outc(Args&&... args) {
 template <typename... Args>
 void outn(Args&&... args) {
 	char buffer[max_buffer_size];
-	unsigned position = 0;
+	size_t position = 0;
 	outc_internal(false, buffer, position, std::forward<Args>(args)...);
 #if enable_console
 	fwrite(buffer, sizeof(char), position, stdout);
@@ -306,7 +316,7 @@ void outn(Args&&... args) {
 template <typename... Args>
 std::string out_string(Args&&... args) {
 	char buffer[max_buffer_size]; //might as well start with a char buffer. we have to shrink it afterward anyway, which requires a memory operation
-	unsigned position = 0;
+	size_t position = 0;
 	outc_internal(false, buffer, position, std::forward<Args>(args)...);
 	return std::string(buffer, buffer + position);
 }
@@ -314,7 +324,7 @@ std::string out_string(Args&&... args) {
 /*
 //probably clobbers something. causes segfault
 #ifndef _MSC_VER
-#define error(...) outc(__VA_ARGS__); __builtin_trap(); __builtin_unreachable()
+#define error(...) outc(__VA_ARGS__); __builtin_trap(); unreachable()
 #else
 #define error(...) outc(__VA_ARGS__); std::raise(SIGABRT)
 #endif
@@ -328,7 +338,7 @@ template <typename... Args>
 	//maybe flush?
 #ifndef _MSC_VER
 	__builtin_trap(); //zero frames added. used to lose frame information when compiled with clang, but seems fixed with clang 6.0.
-	__builtin_unreachable(); //silence noreturn warnings
+	unreachable(); //silence noreturn warnings
 #else
 	std::raise(SIGABRT); //1 frame added
 	//abort(); //adds two frames to the debugger
@@ -355,7 +365,7 @@ inline void check(bool b, Args&&... args) {
 		//maybe flush?
 #ifndef _MSC_VER
 		__builtin_trap();
-		__builtin_unreachable();
+		unreachable();
 #else
 		std::raise(SIGABRT);
 #endif
@@ -373,7 +383,7 @@ inline void check(bool b, Args&&... args) {
 //#include <source_location> //compiler complains
 //#define error_assert(...) (outc(std::source_location::current().function_name(), std::source_location::current().line()), error(__VA_ARGS__ ))
 #else
-#define error_assert(...) __builtin_unreachable()
+#define error_assert(...) unreachable()
 #endif
 #define check_assert(b, ...) \
 	if (!(b)) [[unlikely]] \
