@@ -17,7 +17,7 @@
 #include "etc/glad.c"
 #endif
 
-#include "platform_vsync.cpp" //platform-specific APIs for finding the vsync poing
+#include "platform_vsync.cpp" //platform-specific APIs for finding the vsync point
 #include "vsync.cpp" //calculates phase and period when vsync is grabbed in a separate thread
 #include "vsync_with_scanline.cpp" //calculates phase and period when the scanline is grabbed in the render thread
 
