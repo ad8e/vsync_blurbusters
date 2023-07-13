@@ -1,6 +1,5 @@
+#pragma once
 /*
-vsync slow.cpp contains some logic and math, but I think most of it is obsolete now
-
 goal: find the period and phase of the vblank signal.
 data: reported vblank times. this data is from a thread that waits, is woken up by the system after a vblank, records the current time, then goes back to waiting. it cannot be woken up twice by the same vblank.
 
@@ -69,6 +68,8 @@ runtime max time = size. the convex hull would need to be fully browsed. which i
 /*
 below is documentation for myself, not for others.
 
+etc/vsync slow.cpp contains some logic and math, but I think most of it is obsolete now
+
 future: implement frame shift
 
 future: implement error adjustment, either average, truncated average or order statistic
@@ -113,7 +114,6 @@ how would we maintain our convex hull invariant?
 	and, you have to run find_convex_line_backwards_from() on the moved point itself, too.
 */
 
-#pragma once
 #include "console.h"
 #include "div_floor.h"
 #include "timing.h"
@@ -486,7 +486,7 @@ void new_value(uint64_t new_timepoint) {
 #if phase_error_adjustment_order_statistic
 //at 1, we want 1. at 2, we also want 1.
 unsigned order_statistic(unsigned timepoint_count) {
-	return std::round(timepoint_count / (31 - std::countl_zero(timepoint_count) + 1));
+	return std::lround(timepoint_count / (31 - std::countl_zero(timepoint_count) + 1));
 }
 
 //this returns the phase error times period_denominator. so divide by period_denominator after you get it.
@@ -558,7 +558,7 @@ void set_period_phase() {
 		if (skip_first_few >= 0) {
 			check(value - previous[x] < ticks_per_sec);
 			sums[x] += value - previous[x];
-			squares[x] += std::pow(value - previous[x], 2);
+			squares[x] += sq(value - previous[x]);
 		}
 		previous[x] = value;
 	}
@@ -567,7 +567,7 @@ void set_period_phase() {
 	if (skip_first_few % tests_to_aggregate == tests_to_aggregate - 1) {
 		outc("average error", sum_error / sums[0]);
 		for (int x : std::views::iota(0, tests)) {
-			outc(x, std::sqrt(squares[x] * tests_to_aggregate / std::pow(sums[x], 2) - 1), "lower is better");
+			outc(x, std::sqrt(squares[x] * tests_to_aggregate / sq(sums[x]) - 1), "lower is better");
 			sums[x] = 0;
 			squares[x] = 0;
 		}
