@@ -558,7 +558,7 @@ void set_period_phase() {
 		if (skip_first_few >= 0) {
 			check(value - previous[x] < ticks_per_sec);
 			sums[x] += value - previous[x];
-			squares[x] += sq(value - previous[x]);
+			squares[x] += std::pow(value - previous[x], 2);
 		}
 		previous[x] = value;
 	}
@@ -567,7 +567,7 @@ void set_period_phase() {
 	if (skip_first_few % tests_to_aggregate == tests_to_aggregate - 1) {
 		outc("average error", sum_error / sums[0]);
 		for (int x : std::views::iota(0, tests)) {
-			outc(x, std::sqrt(squares[x] * tests_to_aggregate / sq(sums[x]) - 1), "lower is better");
+			outc(x, std::sqrt(squares[x] * tests_to_aggregate / std::pow(sums[x], 2) - 1), "lower is better");
 			sums[x] = 0;
 			squares[x] = 0;
 		}
